@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>Заявки — Yerevan Web Studio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f0f10;
+    color: #eee;
+  }
+  header {
+    padding: 24px 28px;
+    border-bottom: 1px solid #2a2a2c;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  input, select, button {
+    background: #1c1c1e;
+    border: 1px solid #333;
+    color: #eee;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: #666; }
+  #key { min-width: 220px; }
+  main { padding: 20px 28px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #232325; vertical-align: top; }
+  th { color: #999; font-weight: 500; position: sticky; top: 0; background: #0f0f10; }
+  tr:hover { background: #17171a; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; background: #2a2a2e; color: #c9a24b;
+  }
+  .msg { max-width: 320px; white-space: pre-wrap; }
+  .muted { color: #888; }
+  .del { color: #e0605e; background: none; border: none; cursor: pointer; font-size: 13px; }
+  #status { padding: 40px; text-align: center; color: #888; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📋 Заявки с сайта</h1>
+  <input id="key" type="password" placeholder="Admin key" />
+  <select id="filter">
+    <option value="">Все формы</option>
+    <option value="agency_contact">Агентство — заявка</option>
+    <option value="restaurant_reservation">Ресторан — бронь</option>
+    <option value="barbershop_booking">Барбершоп — запись</option>
+    <option value="carservice_request">Автосервис — заявка</option>
+    <option value="realestate_lead">Недвижимость — лид</option>
+  </select>
+  <button id="load">Показать</button>
+  <button id="export">Скачать CSV</button>
+</header>
+<main>
+  <div id="status">Введите admin key и нажмите «Показать»</div>
+  <table id="table" style="display:none">
+    <thead>
+      <tr>
+        <th>Дата</th><th>Форма</th><th>Имя</th><th>Телефон</th>
+        <th>Детали</th><th>Сообщение</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+
+<script>
+  const API_BASE = window.location.origin
+  const keyInput = document.getElementById('key')
+  const filterSelect = document.getElementById('filter')
+  const statusEl = document.getElementById('status')
+  const table = document.getElementById('table')
+  const rowsEl = document.getElementById('rows')
+
+  // Remember the key locally so you don't retype it every visit.
+  keyInput.value = localStorage.getItem('admin_key') || ''
+
+  const formLabels = {
+    agency_contact: 'Заявка (агентство)',
+    restaurant_reservation: 'Бронь стола',
+    barbershop_booking: 'Запись в барбершоп',
+    carservice_request: 'Заявка в автосервис',
+    realestate_lead: 'Лид (недвижимость)',
+  }
+
+  function detailsFor(row) {
+    const parts = []
+    if (row.business) parts.push(row.business + (row.business_type ? ' · ' + row.business_type : ''))
+    if (row.service) parts.push(row.service)
+    if (row.vehicle) parts.push(row.vehicle)
+    if (row.intent) parts.push(row.intent)
+    if (row.guests) parts.push(row.guests + ' guests')
+    if (row.preferred_date) parts.push(row.preferred_date)
+    return parts.join(' · ') || '—'
+  }
+
+  async function load() {
+    const key = keyInput.value.trim()
+    if (!key) { statusEl.textContent = 'Введите admin key'; return }
+    localStorage.setItem('admin_key', key)
+
+    statusEl.style.display = 'block'
+    statusEl.textContent = 'Загрузка…'
+    table.style.display = 'none'
+
+    const params = new URLSearchParams({ limit: '200' })
+    if (filterSelect.value) params.set('form_type', filterSelect.value)
+
+    try {
+      const res = await fetch(`${API_BASE}/api/submissions?${params}`, {
+        headers: { 'x-admin-key': key },
+      })
+      if (res.status === 401) { statusEl.textContent = 'Неверный admin key'; return }
+      if (!res.ok) { statusEl.textContent = 'Ошибка загрузки'; return }
+      const data = await res.json()
+
+      if (data.submissions.length === 0) {
+        statusEl.textContent = 'Заявок пока нет'
+        return
+      }
+
+      rowsEl.innerHTML = data.submissions.map((row) => `
+        <tr data-id="${row.id}">
+          <td class="muted">${new Date(row.created_at).toLocaleString('ru-RU')}</td>
+          <td><span class="badge">${formLabels[row.form_type] || row.form_type}</span></td>
+          <td>${row.name || ''}</td>
+          <td>${row.phone ? `<a href="tel:${row.phone}" style="color:#eee">${row.phone}</a>` : ''}</td>
+          <td>${detailsFor(row)}</td>
+          <td class="msg">${row.message || ''}</td>
+          <td><button class="del" onclick="del(${row.id})">Удалить</button></td>
+        </tr>
+      `).join('')
+
+      statusEl.style.display = 'none'
+      table.style.display = 'table'
+    } catch (e) {
+      statusEl.textContent = 'Не удалось связаться с сервером'
+    }
+  }
+
+  async function del(id) {
+    if (!confirm('Удалить заявку?')) return
+    const key = keyInput.value.trim()
+    await fetch(`${API_BASE}/api/submissions/${id}`, {
+      method: 'DELETE',
+      headers: { 'x-admin-key': key },
+    })
+    load()
+  }
+  window.del = del
+
+  document.getElementById('load').addEventListener('click', load)
+  document.getElementById('export').addEventListener('click', () => {
+    const key = keyInput.value.trim()
+    if (!key) return alert('Введите admin key')
+    // simplest reliable way to pass the header is a fetch + blob download
+    fetch(`${API_BASE}/api/submissions/export.csv`, { headers: { 'x-admin-key': key } })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'submissions.csv'
+        a.click()
+      })
+  })
+
+  if (keyInput.value) load()
+</script>
+</body>
+</html>
